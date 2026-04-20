@@ -1,0 +1,9 @@
+# dependencies
+/node_modules
+
+# Surfpool local chain state
+/.surfpool
+
+# misc
+.DS_Store
+*.log
