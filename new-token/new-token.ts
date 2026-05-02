@@ -23,10 +23,17 @@ import {
   getInitializeMintInstruction,
   getInitializeAccount2Instruction,
   getCreateAssociatedTokenInstructionAsync,
+  getMintToInstruction,
+  getTransferInstruction,
+  getFreezeAccountInstruction,
+  getThawAccountInstruction,
+  getBurnCheckedInstruction,
+  getCloseAccountInstruction,
   getMintSize,
   getTokenSize,
   TOKEN_2022_PROGRAM_ADDRESS,
   findAssociatedTokenPda,
+  fetchToken,
 } from "@solana-program/token-2022";
 
 async function main() {
@@ -59,6 +66,7 @@ async function main() {
     mint: mint.address,
     decimals: 9,
     mintAuthority: feePayer.address,
+    freezeAuthority: feePayer.address,
   });
 
   const instructions = [createAccountInstruction, initializeMintInstruction];
@@ -208,6 +216,369 @@ async function main() {
   console.log(
     "\nAssociated Token Account Creation Transaction Signature:",
     ataTxSignature,
+  );
+
+  const mintToInstruction = getMintToInstruction({
+    mint: mint.address,
+    token: associatedTokenAccountAddress,
+    mintAuthority: feePayer.address,
+    amount: 1_000_000_000n,
+  });
+  
+  const { value: mintToLatestBlockhash } = await rpc.getLatestBlockhash().send();
+  
+  const mintToTxMessage = pipe(
+    createTransactionMessage({ version: 0 }),
+    (tx) => setTransactionMessageFeePayerSigner(feePayer, tx),
+    (tx) =>
+      setTransactionMessageLifetimeUsingBlockhash(mintToLatestBlockhash, tx),
+    (tx) => appendTransactionMessageInstructions([mintToInstruction], tx),
+  );
+  
+  const signedMintToTxMessage =
+    await signTransactionMessageWithSigners(mintToTxMessage);
+  
+  const signedMintToTxMessageWithLifetime =
+    signedMintToTxMessage as typeof signedMintToTxMessage & {
+      lifetimeConstraint: {
+        lastValidBlockHeight: bigint;
+      };
+    };
+  
+  await sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions })(
+    signedMintToTxMessageWithLifetime,
+    { commitment: "confirmed" },
+  );
+  
+  const mintToTxSignature = getSignatureFromTransaction(
+    signedMintToTxMessageWithLifetime,
+  );
+  
+  console.log("\nMint To Transaction Signature:", mintToTxSignature);
+  
+  const ataData = await fetchToken(rpc, associatedTokenAccountAddress, {
+    commitment: "confirmed",
+  });
+  
+  const ataBalance = ataData.data.amount;
+
+  console.log(
+    "Associated Token Account Balance:",
+    Number(ataBalance) / 1_000_000_000,
+  );
+
+  const recipient = await generateKeyPairSigner();
+
+  const [recipientAssociatedTokenAddress] = await findAssociatedTokenPda({
+    mint: mint.address,
+    owner: recipient.address,
+    tokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
+  });
+  
+  console.log(
+    "\nRecipient Associated Token Account Address:",
+    recipientAssociatedTokenAddress,
+  );
+  
+  const createRecipientAtaInstruction =
+    await getCreateAssociatedTokenInstructionAsync({
+      payer: feePayer,
+      mint: mint.address,
+      owner: recipient.address,
+    });
+  
+  const { value: createRecipientAtaLatestBlockhash } = await rpc
+    .getLatestBlockhash()
+    .send();
+  
+  const recipientAtaTxMessage = pipe(
+    createTransactionMessage({ version: 0 }),
+    (tx) => setTransactionMessageFeePayerSigner(feePayer, tx),
+    (tx) =>
+      setTransactionMessageLifetimeUsingBlockhash(
+        createRecipientAtaLatestBlockhash,
+        tx,
+      ),
+    (tx) =>
+      appendTransactionMessageInstructions([createRecipientAtaInstruction], tx),
+  );
+  
+  const signedRecipientAtaTxMessage = await signTransactionMessageWithSigners(
+    recipientAtaTxMessage,
+  );
+  
+  const signedRecipientAtaTxMessageWithLifetime =
+    signedRecipientAtaTxMessage as typeof signedRecipientAtaTxMessage & {
+      lifetimeConstraint: {
+        lastValidBlockHeight: bigint;
+      };
+    };
+  await sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions })(
+    signedRecipientAtaTxMessageWithLifetime,
+    { commitment: "confirmed" },
+  );
+  
+  const recipientAtaTxSignature = getSignatureFromTransaction(
+    signedRecipientAtaTxMessageWithLifetime,
+  );
+  
+  console.log(
+    "\nRecipient Associated Token Account Creation Transaction Signature:",
+    recipientAtaTxSignature,
+  );
+  
+  const transferInstruction = getTransferInstruction({
+    source: associatedTokenAccountAddress,
+    destination: recipientAssociatedTokenAddress,
+    authority: feePayer.address,
+    amount: 500_000_000n,
+  });
+  
+  const { value: transferLatestBlockhash } = await rpc
+    .getLatestBlockhash()
+    .send();
+  
+  const transferTxMessage = pipe(
+    createTransactionMessage({ version: 0 }),
+    (tx) => setTransactionMessageFeePayerSigner(feePayer, tx),
+    (tx) =>
+      setTransactionMessageLifetimeUsingBlockhash(transferLatestBlockhash, tx),
+    (tx) => appendTransactionMessageInstructions([transferInstruction], tx),
+  );
+  
+  const signedTransferTxMessage =
+    await signTransactionMessageWithSigners(transferTxMessage);
+  
+  const signedTransferTxMessageWithLifetime =
+    signedTransferTxMessage as typeof signedTransferTxMessage & {
+      lifetimeConstraint: {
+        lastValidBlockHeight: bigint;
+      };
+    };
+  
+  await sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions })(
+    signedTransferTxMessageWithLifetime,
+    { commitment: "confirmed" },
+  );
+  
+  const transferTxSignature = getSignatureFromTransaction(
+    signedTransferTxMessageWithLifetime,
+  );
+  
+  console.log("\nTransfer Transaction Signature:", transferTxSignature);
+  
+  const senderAtaData = await fetchToken(rpc, associatedTokenAccountAddress, {
+    commitment: "confirmed",
+  });
+  
+  const senderAtaBalance = Number(senderAtaData.data.amount);
+  
+  console.log(
+    "Sender Associated Token Account Balance:",
+    senderAtaBalance / 1_000_000_000,
+  );
+  
+  const recipientAtaData = await fetchToken(
+    rpc,
+    recipientAssociatedTokenAddress,
+    { commitment: "confirmed" },
+  );
+  
+  const recipientAtaBalance = Number(recipientAtaData.data.amount);
+  
+  console.log(
+    "Recipient Associated Token Account Balance:",
+    recipientAtaBalance / 1_000_000_000,
+  );
+
+  const freezeInstruction = getFreezeAccountInstruction({
+    account: associatedTokenAccountAddress,
+    mint: mint.address,
+    owner: feePayer.address,
+  });
+  
+  const { value: freezeLatestBlockhash } = await rpc.getLatestBlockhash().send();
+  
+  const freezeTxMessage = pipe(
+    createTransactionMessage({ version: 0 }),
+    (tx) => setTransactionMessageFeePayerSigner(feePayer, tx),
+    (tx) =>
+      setTransactionMessageLifetimeUsingBlockhash(freezeLatestBlockhash, tx),
+    (tx) => appendTransactionMessageInstructions([freezeInstruction], tx),
+  );
+  
+  const signedFreezeTxMessage =
+    await signTransactionMessageWithSigners(freezeTxMessage);
+  
+  const signedFreezeTxMessageWithLifetime =
+    signedFreezeTxMessage as typeof signedFreezeTxMessage & {
+      lifetimeConstraint: {
+        lastValidBlockHeight: bigint;
+      };
+    };
+  
+  await sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions })(
+    signedFreezeTxMessageWithLifetime,
+    { commitment: "confirmed" },
+  );
+  
+  const freezeTxSignature = getSignatureFromTransaction(
+    signedFreezeTxMessageWithLifetime,
+  );
+  
+  console.log("\nFreeze Account Transaction Signature:", freezeTxSignature);
+  
+  const thawInstruction = getThawAccountInstruction({
+    account: associatedTokenAccountAddress,
+    mint: mint.address,
+    owner: feePayer.address,
+  });
+  
+  const { value: thawLatestBlockhash } = await rpc.getLatestBlockhash().send();
+  
+  const thawTxMessage = pipe(
+    createTransactionMessage({ version: 0 }),
+    (tx) => setTransactionMessageFeePayerSigner(feePayer, tx),
+    (tx) => setTransactionMessageLifetimeUsingBlockhash(thawLatestBlockhash, tx),
+    (tx) => appendTransactionMessageInstructions([thawInstruction], tx),
+  );
+  
+  const signedThawTxMessage =
+    await signTransactionMessageWithSigners(thawTxMessage);
+  
+  const signedThawTxMessageWithLifetime =
+    signedThawTxMessage as typeof signedThawTxMessage & {
+      lifetimeConstraint: {
+        lastValidBlockHeight: bigint;
+      };
+    };
+  
+  await sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions })(
+    signedThawTxMessageWithLifetime,
+    { commitment: "confirmed" },
+  );
+  
+  const thawTxSignature = getSignatureFromTransaction(
+    signedThawTxMessageWithLifetime,
+  );
+  
+  console.log("\nThaw Account Transaction Signature:", thawTxSignature);
+
+  const ataBeforeBurn = await fetchToken(rpc, associatedTokenAccountAddress, {
+    commitment: "confirmed",
+  });
+  
+  console.log(
+    "\nAssociated Token Account Balance Before Burn:",
+    Number(ataBeforeBurn.data.amount) / 1_000_000_000,
+  );
+  
+  const burnInstruction = getBurnCheckedInstruction({
+    account: associatedTokenAccountAddress,
+    mint: mint.address,
+    authority: feePayer.address,
+    amount: 500_000_000n,
+    decimals: 9,
+  });
+  
+  const { value: burnLatestBlockhash } = await rpc.getLatestBlockhash().send();
+  
+  const burnTxMessage = pipe(
+    createTransactionMessage({ version: 0 }),
+    (tx) => setTransactionMessageFeePayerSigner(feePayer, tx),
+    (tx) => setTransactionMessageLifetimeUsingBlockhash(burnLatestBlockhash, tx),
+    (tx) => appendTransactionMessageInstructions([burnInstruction], tx),
+  );
+  
+  const signedBurnTxMessage =
+    await signTransactionMessageWithSigners(burnTxMessage);
+  
+  const signedBurnTxMessageWithLifetime =
+    signedBurnTxMessage as typeof signedBurnTxMessage & {
+      lifetimeConstraint: {
+        lastValidBlockHeight: bigint;
+      };
+    };
+  
+  await sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions })(
+    signedBurnTxMessageWithLifetime,
+    { commitment: "confirmed" },
+  );
+  
+  const burnTxSignature = getSignatureFromTransaction(
+    signedBurnTxMessageWithLifetime,
+  );
+  
+  console.log("\nBurn Transaction Signature:", burnTxSignature);
+  
+  const ataAfterBurn = await fetchToken(rpc, associatedTokenAccountAddress, {
+    commitment: "confirmed",
+  });
+  
+  console.log(
+    "Associated Token Account Balance After Burn:",
+    Number(ataAfterBurn.data.amount) / 1_000_000_000,
+  );
+
+  const destination = await generateKeyPairSigner();
+
+  const { value: destinationBalanceBeforeClose } = await rpc
+    .getBalance(destination.address, {
+      commitment: "confirmed",
+    })
+    .send();
+  
+  console.log(
+    "\nDestination Account Balance Before Close:",
+    Number(destinationBalanceBeforeClose) / 1_000_000_000,
+  );
+  
+  const { value: closeLatestBlockhash } = await rpc.getLatestBlockhash().send();
+  
+  const closeAccountInstruction = getCloseAccountInstruction({
+    account: associatedTokenAccountAddress,
+    destination: destination.address,
+    owner: feePayer.address,
+  });
+  
+  const closeAccountTxMessage = pipe(
+    createTransactionMessage({ version: 0 }),
+    (tx) => setTransactionMessageFeePayerSigner(feePayer, tx),
+    (tx) => setTransactionMessageLifetimeUsingBlockhash(closeLatestBlockhash, tx),
+    (tx) => appendTransactionMessageInstructions([closeAccountInstruction], tx),
+  );
+  
+  const signedCloseAccountTxMessage = await signTransactionMessageWithSigners(
+    closeAccountTxMessage,
+  );
+  
+  const signedCloseAccountTxMessageWithLifetime =
+    signedCloseAccountTxMessage as typeof signedCloseAccountTxMessage & {
+      lifetimeConstraint: {
+        lastValidBlockHeight: bigint;
+      };
+    };
+  
+  await sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions })(
+    signedCloseAccountTxMessageWithLifetime,
+    { commitment: "confirmed" },
+  );
+  
+  const closeAccountTxSignature = getSignatureFromTransaction(
+    signedCloseAccountTxMessageWithLifetime,
+  );
+  
+  console.log("\nClose Account Transaction Signature:", closeAccountTxSignature);
+  
+  const { value: destinationBalanceAfterClose } = await rpc
+    .getBalance(destination.address, {
+      commitment: "confirmed",
+    })
+    .send();
+  
+  console.log(
+    "Destination Account Balance After Close:",
+    Number(destinationBalanceAfterClose) / 1_000_000_000,
   );
 
 }
